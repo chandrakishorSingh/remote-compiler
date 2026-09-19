@@ -95,6 +95,32 @@
 	- `go test ./...` inside `cli/` -> cli tests
 	- failsafe still has to be added to `server/pom.xml`; the spring boot parent manages its version, so only the plugin entry with the `integration-test` and `verify` goals is needed
 
+- manual smoke test (cli against a running server)
+	- setup
+		* start the server: `./mvnw spring-boot:run` in `server/`
+		* build the cli: `go build -o rcc .` in `cli/`
+		* sample programs (create once):
+			- `printf 'print(2+2)\n' > /tmp/hello.py`
+			- `printf 'import sys\nsys.stderr.write("boom\n")\nsys.exit(3)\n' > /tmp/boom.py`
+			- `printf 'while True: pass\n' > /tmp/loop.py`
+			- `printf 'for i in range(200000): print(i)\n' > /tmp/big.py`
+			- `: > /tmp/empty.py`
+	- checks — run `echo $?` after each one to see the exit code
+		* `./rcc /tmp/hello.py` -> `4` on stdout, exit 0
+		* `./rcc /tmp/boom.py` -> `boom` on stderr, exit 3 (the program's own exit code)
+		* `./rcc /tmp/loop.py` -> `execution timed out after 5s` on stderr after ~5s, exit 124
+		* `./rcc /tmp/big.py | wc -c` -> 65536, plus `rcc: output truncated at 64KB` on stderr
+		* `./rcc -lang ruby /tmp/hello.py` -> `rcc: unsupported language: ruby`, exit 1
+		* `./rcc /tmp/empty.py` -> `rcc: request validation failed` and `code: code is required`, exit 1
+		* `./rcc -server http://localhost:9999 /tmp/hello.py` -> `connection refused`, exit 1 (no panic)
+		* `./rcc /tmp/hello.py > /tmp/out.txt` -> `/tmp/out.txt` holds exactly `4\n` and nothing else
+		* `./rcc /tmp/hello.py -lang python` -> usage text, exit 2 (go's flag package stops parsing at the first non-flag arg, so flags must come before the file)
+	- raw http checks the cli cannot produce (it always sends a well-formed request)
+		* `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/v1/executions` -> 405 (GET is not mapped)
+		* `curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8080/api/v1/executions -d '{"language":"python","code":"print(1)"}'` -> 415 (no content-type header)
+		* `curl -s -X POST http://localhost:8080/api/v1/executions -H 'Content-Type: application/json' -d '{"language":"python","code":"print(2+2)"}'` -> 200 with `"stdout":"4\n"`, `"exitCode":0`, `"truncated":false`
+	- after the run: `ls -d /tmp/exec-*` should list nothing — every execution directory is deleted, including after a timeout
+
 - testability change to make first
 	- `CodeExecutionService` hardcodes `TIMEOUT_SECONDS = 5` and `MAX_OUTPUT_CHARS = 64 * 1024`, which would make every timeout test take 5 seconds and every truncation test generate 64kb
 	- move both into `application.properties` as `execution.timeout` and `execution.max-output-chars`, bound with `@ConfigurationProperties`, and override them in `src/test/resources/application.properties` (e.g. 1s and 200 chars)
@@ -116,6 +142,29 @@
 	- `TestRestTemplate` moved to `org.springframework.boot.resttestclient`; `RestTestClient` is in `org.springframework.test.web.servlet.client`
 	- versions currently pulled in: junit jupiter 6.0.3, assertj 3.27.7, mockito 5.23.0
 
+## Version 2 — design changes
+
+- add a field `status` in the api output of execution result which will indicate about the execution result of the program (for ex. whether it got timeout, exceeded memory/time limit/output buffer etc.)
+    - replace the `-1` exit code sentinel with an explicit `status` field
+    	- what v1 does
+    		* when the program is killed after the timeout, `CodeExecutionService` returns `exitCode = -1`
+    		* `-1` works as a sentinel because a real unix exit status is a single unsigned byte (0-255), so no program can produce a negative value
+    		* the cli then has to decode that magic number: `if result.ExitCode < 0 -> exit 124`
+    	- why that is a poor design
+    		* one numeric field means two different things: "the program's exit code" and "the program never got to exit"
+    		* the meaning lives in prose, not in the api — every new client has to learn the magic number
+    		* the alternatives are worse: the real value after `destroyForcibly()` is `137` (128 + SIGKILL), and `124` is what GNU `timeout` uses, but a program can genuinely `exit 137` or `exit 124`, so both are ambiguous
+    	- what v2 will do
+    		* add a `status` enum to `ExecutionResponse`: `COMPLETED`, `TIMEOUT`, and later `MEMORY_EXCEEDED` / `OUTPUT_LIMIT_EXCEEDED` when the sandbox lands
+    		* `exitCode` becomes null unless the program actually exited, so it only ever holds a real exit code
+    		* shape: `{"status":"TIMEOUT","exitCode":null,...}` vs `{"status":"COMPLETED","exitCode":3,...}`
+    		* the cli branches on `status` instead of the sign of a number; it still maps a timeout to exit code 124 for shell users, but that mapping becomes a cli display decision rather than an api contract
+    	- why it is worth doing
+    		* self-describing in openapi (an enum documents itself, `-1` needs a footnote)
+    		* easier to assert in tests
+    		* this is how judge0/piston-style execution services model it
+    		* the sandbox will add more non-exit outcomes, and each one would otherwise need another magic number
+
 ## NOTE
 
 - useful spring boot commands:
@@ -127,3 +176,6 @@
         - @NotBlank means non-null and not only whitespace (@NotNull allows "", @NotEmpty allows " ").
         - The checks run after Jackson builds the record and before your method is called; on failure Spring throws MethodArgumentNotValidException.
         - comes from spring-boot-starter-validation dependency
+- Go concepts
+    - useful commands
+        - a file with go code is called go module
