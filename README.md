@@ -56,14 +56,6 @@
 		* users can send request containing the code to execute to the server and will receive the code output along with execution information like memory/cpu time which they can display on the terminal.
 		* it can request to server to show stats about its past sessions(one session info will have the time of req, input code, output, memory used, time taken for execution etc.)
 
-## Version 1
-
-- we'll create a very simple and minimal version of this software for the first version and after that we'll incrementally add more features and make it more robust.
-- we'll go with the following:
-	- Spring Boot project — single endpoint that accepts code + language, runs it, returns output (no auth, no DB, no sandbox — just Runtime.exec() locally)
-	- Go CLI — simple HTTP POST with code, prints the response
-	- Dockerfile — containerize the Spring Boot app
-
 ## Testing
 
 - principles
@@ -141,6 +133,14 @@
 	- `@MockitoBean` (`org.springframework.test.context.bean.override.mockito`) replaces the removed `@MockBean`
 	- `TestRestTemplate` moved to `org.springframework.boot.resttestclient`; `RestTestClient` is in `org.springframework.test.web.servlet.client`
 	- versions currently pulled in: junit jupiter 6.0.3, assertj 3.27.7, mockito 5.23.0
+
+## Version 1 - DONE
+
+- we'll create a very simple and minimal version of this software for the first version and after that we'll incrementally add more features and make it more robust.
+- we'll go with the following:
+	- Spring Boot project — single endpoint that accepts code + language, runs it, returns output (no auth, no DB, no sandbox — just Runtime.exec() locally)
+	- Go CLI — simple HTTP POST with code, prints the response
+	- Dockerfile — containerize the Spring Boot app
 
 ## Version 2 — design changes
 
