@@ -134,6 +134,37 @@
 	- `TestRestTemplate` moved to `org.springframework.boot.resttestclient`; `RestTestClient` is in `org.springframework.test.web.servlet.client`
 	- versions currently pulled in: junit jupiter 6.0.3, assertj 3.27.7, mockito 5.23.0
 
+## CI/CD (github actions) — planned
+
+- what it is
+	- yaml workflow files in `.github/workflows/`, run by github on events (push, pull request, tag, schedule) on a fresh vm it provides
+	- it is a script runner with triggers, not a separate technology to learn deeply
+
+- scope for now — one workflow, triggered on pushes to `main` and on pull requests
+	- server: `./mvnw verify` on jdk 25 (ubuntu runners already ship `python3`, which the `*IT` tests need)
+	- cli: `go build ./...`, `go vet ./...`, `gofmt -l .` (fail the build if gofmt prints anything)
+	- image: `docker build server/` to prove the dockerfile still builds when the pom or source changes
+	- value: catches "works on my machine" problems — e.g. the headless-jdk issue that broke the first maven build would have shown up immediately
+
+- later
+	- publish the image to `ghcr.io` when a version tag is pushed (this is where git tags and actions meet)
+	- release `rcc` binaries for linux/mac/windows from a build matrix, attached to the github release
+	- cache `~/.m2` and the go build cache so runs stay short
+	- service containers (postgres, rabbitmq) for the v2 integration tests
+	- static analysis: golangci-lint (go), spotbugs (java), codeql (security)
+	- dependabot for dependency and security updates
+
+- out of scope
+	- deployment — there is nowhere to deploy yet
+	- sandbox tests — gvisor/firecracker need kernel features hosted runners don't reliably provide, so those stay local
+	- scheduled runs — nothing in this project changes on its own
+
+- cost note
+	- this repo is private, so actions minutes come from the monthly free allowance (2000 minutes on the free plan; the billing page has the exact figure)
+	- a maven build burns ~2-4 minutes per push, a docker build more
+	- keep it cheap: trigger on `main` + prs only, cache maven/go, and run the docker job only when `server/**` changes
+	- public repos get unlimited minutes, so making this repo public would remove the limit entirely
+
 ## Version 1 - DONE
 
 - we'll create a very simple and minimal version of this software for the first version and after that we'll incrementally add more features and make it more robust.
