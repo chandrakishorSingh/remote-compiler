@@ -179,3 +179,30 @@
 - Go concepts
     - useful commands
         - a file with go code is called go module
+- Git concepts
+    - Tags
+        - Lightweight — just a name pointing at a commit, nothing else:
+        git tag v1.0.0
+        
+        Annotated — a real object in the database with the tagger's name, a date, a message, and optionally a GPG signature:
+        git tag -a v1.0.0 -m "Version 1: server, go cli, dockerfile"
+        
+        Use annotated tags for releases. The extra metadata is the point: six months from now git show v1.0.0 tells you who marked it and why. Lightweight tags are for private, throwaway bookmarks.
+        
+        The commands you'd use
+        
+        git tag                        # list tags
+        git tag -n                     # list with their messages
+        git show v1.0.0                # tagger, date, message, then the commit
+        git log --oneline --decorate   # see tags next to commits in the log
+        
+        git push origin v1.0.0         # push one tag
+        git push --tags                # push all tags
+        
+        Tags are not pushed by a normal git push — that trips up everyone at least once. Your tag lives only on your machine until you push it explicitly.
+        
+        To remove one:
+        git tag -d v1.0.0                    # local
+        git push origin --delete v1.0.0      # remote
+        
+        Treat tags as immutable once pushed. Moving a published tag means everyone who fetched it has a different idea of what v1.0.0 is.
