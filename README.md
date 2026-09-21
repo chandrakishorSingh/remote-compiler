@@ -173,28 +173,103 @@
 	- Go CLI — simple HTTP POST with code, prints the response
 	- Dockerfile — containerize the Spring Boot app
 
-## Version 2 — design changes
+## Version 2 — roadmap
 
-- add a field `status` in the api output of execution result which will indicate about the execution result of the program (for ex. whether it got timeout, exceeded memory/time limit/output buffer etc.)
-    - replace the `-1` exit code sentinel with an explicit `status` field
-    	- what v1 does
-    		* when the program is killed after the timeout, `CodeExecutionService` returns `exitCode = -1`
-    		* `-1` works as a sentinel because a real unix exit status is a single unsigned byte (0-255), so no program can produce a negative value
-    		* the cli then has to decode that magic number: `if result.ExitCode < 0 -> exit 124`
-    	- why that is a poor design
-    		* one numeric field means two different things: "the program's exit code" and "the program never got to exit"
-    		* the meaning lives in prose, not in the api — every new client has to learn the magic number
-    		* the alternatives are worse: the real value after `destroyForcibly()` is `137` (128 + SIGKILL), and `124` is what GNU `timeout` uses, but a program can genuinely `exit 137` or `exit 124`, so both are ambiguous
-    	- what v2 will do
-    		* add a `status` enum to `ExecutionResponse`: `COMPLETED`, `TIMEOUT`, and later `MEMORY_EXCEEDED` / `OUTPUT_LIMIT_EXCEEDED` when the sandbox lands
-    		* `exitCode` becomes null unless the program actually exited, so it only ever holds a real exit code
-    		* shape: `{"status":"TIMEOUT","exitCode":null,...}` vs `{"status":"COMPLETED","exitCode":3,...}`
-    		* the cli branches on `status` instead of the sign of a number; it still maps a timeout to exit code 124 for shell users, but that mapping becomes a cli display decision rather than an api contract
-    	- why it is worth doing
-    		* self-describing in openapi (an enum documents itself, `-1` needs a footnote)
-    		* easier to assert in tests
-    		* this is how judge0/piston-style execution services model it
-    		* the sandbox will add more non-exit outcomes, and each one would otherwise need another magic number
+- goal: be "correct" first and "efficient" later (v3+). v2 should be close to the final version in functionality.
+
+- decisions taken before starting
+	- database comes before auth — auth needs a real `users` table, otherwise it gets written twice
+	- rest api design is not a phase — it is an openapi contract written early and implemented continuously
+	- spring owns authentication — session cookie for the web client, long-lived api token for the cli
+	- sandbox before languages — execution moves into a container per run first, then a language is just config
+	- v2 ships 3-4 representative languages, not all 19
+
+- versions available through the spring boot 4.1.1 parent (no version numbers needed in the pom)
+	- spring security 7.1.1, spring session 4.1.1, flyway 12.4.0, postgresql driver 42.7.13, testcontainers 2.0.5
+	- frontend: next.js 16.3.5, react 19.3.0
+
+- step 0 — add the `status` field (small, do it first)
+	- why first: it is a breaking api change and the cli is currently the only client; every later client would otherwise have to learn the `-1` magic number
+	- what v1 does
+		* when the program is killed after the timeout, `CodeExecutionService` returns `exitCode = -1`
+		* `-1` works as a sentinel because a real unix exit status is a single unsigned byte (0-255), so no program can produce a negative value
+		* the cli then has to decode that magic number: `if result.ExitCode < 0 -> exit 124`
+	- why that is a poor design
+		* one numeric field means two different things: "the program's exit code" and "the program never got to exit"
+		* the meaning lives in prose, not in the api
+		* the alternatives are worse: the real value after `destroyForcibly()` is `137` (128 + SIGKILL), and `124` is what GNU `timeout` uses, but a program can genuinely `exit 137` or `exit 124`
+	- what to do
+		* `status` enum on `ExecutionResponse`: `COMPLETED`, `TIMEOUT` (later `MEMORY_EXCEEDED`, `OUTPUT_LIMIT_EXCEEDED`, `COMPILE_ERROR`)
+		* `exitCode` becomes nullable (`Integer`) — it only ever holds a real exit code
+		* the cli branches on `status`; mapping a timeout to exit 124 becomes a cli display decision, not an api contract
+	- done when: the smoke checks still pass and no client reads a negative exit code
+
+- step 1 — persistence: postgres + flyway, still no auth
+	- why here: it is the foundation auth sits on, and it delivers value on its own (history exists before users do)
+	- `spring-boot-starter-data-jpa`, `postgresql`, `flyway-core`; postgres for local dev via `compose.yaml`
+	- migrations in `server/src/main/resources/db/migration/` — write the sql by hand, that is the point of learning a migration tool
+		* `V1__create_users.sql`: `users(id, email, password_hash, provider, provider_id, created_at)`
+		* `V2__create_executions.sql`: `executions(id, user_id nullable, language, code, stdout, stderr, exit_code, status, duration_ms, truncated, created_at)`
+	- new `.../persistence` package (entity + repository); the service saves a row after each run; `user_id` stays null until step 2
+	- tests: testcontainers starts a real postgres for the `*IT` tests
+	- done when: a POST leaves a row in the db and migrations run on a clean database
+
+- step 2 — authentication (spring security 7)
+	- why here: the users table now exists, so nothing is throwaway
+	- email/password first (filter chain, `PasswordEncoder`, `UserDetailsService`), then oauth2 login for google/github on top
+	- web: session cookie backed by spring session, csrf enabled for cookie-authenticated routes
+	- cli: api tokens — `V3__create_api_tokens.sql` (hashed token, label, last_used_at), `rcc login` stores one in `~/.config/rcc/config.json`, sent as `Authorization: Bearer`
+	- executions start recording `user_id`; decide then whether anonymous execution stays (and is rate-limited by ip) or stops
+	- done when: the same endpoint authenticates a browser session and a cli token, and rows carry the right user
+
+- step 3 — api surface + openapi contract
+	- why here: the web client needs a contract to build against, and history endpoints need `user_id` to exist
+	- `GET /api/v1/executions` — current user's history, paginated (`page`, `size`, `sort`), never another user's rows
+	- `GET /api/v1/executions/{id}` — one execution
+	- `GET /api/v1/languages` — supported languages, so the web client's dropdown is not hardcoded
+	- `springdoc-openapi` for generated docs; cors configured for the next.js dev origin; keep using `ProblemDetail` for errors
+	- done when: `rcc history` works against these endpoints and the openapi page documents them
+
+- step 4 — web client (next.js 16 / react 19)
+	- why here: it consumes steps 1-3, and it is the biggest new-technology jump, so it should land on a stable api
+	- new top-level `web/` directory, app router
+	- login/signup pages driven by spring's endpoints; editor page (codemirror or monaco), run button, stdout/stderr panes, history list
+	- the session cookie flows through on its own — nothing custom needed
+	- done when: a user can sign up, run code and see history in the browser, with the cli still working unchanged
+
+- step 5 — sandboxed execution (the architectural change)
+	- why here: it rewrites *how* code runs, so it must come before the language work or the plumbing gets built twice
+	- note: this holds only while the app runs on localhost — if it is ever exposed publicly, this step moves to the front
+	- container per execution: `--network=none`, `--memory`, `--cpus`, `--pids-limit`, read-only root + small tmpfs, non-root user, hard kill on timeout
+	- introduce an `ExecutionRunner` interface with a host implementation (today's code) and a container implementation, chosen by config — keeps tests fast and the migration reversible
+	- `status` gains `MEMORY_EXCEEDED` / `OUTPUT_LIMIT_EXCEEDED` — the enum from step 0 pays off here
+	- regression tests: submitted code must not read the host filesystem and must not open a network connection (both succeed today, so they prove this step worked)
+	- gvisor (`runsc`) is the stronger follow-up once the container path works; it needs no kvm, unlike firecracker
+	- done when: both escape attempts fail from inside the sandbox and normal programs still run
+
+- step 6 — more languages (3-4 in v2)
+	- why here: with per-execution containers a language is an image plus a config entry
+	- `Language` moves from a hardcoded enum to configuration: id, image, source filename, optional compile command, run command
+	- add c++ (compile step), java (compile + classpath), javascript — these cover every mechanism; the rest is repetition
+	- compile errors are a distinct failure mode from runtime errors: `status` should say `COMPILE_ERROR`
+	- done when: `GET /api/v1/languages` lists them and each runs end-to-end from both clients
+
+- deferred to v3 (so v2 does not sprawl) — these are efficiency and scale concerns, not correctness
+	- rabbitmq + async execution
+	- redis caching and rate-limit counters
+	- websocket/sse output streaming
+	- prometheus + grafana
+	- nginx/traefik
+	- horizontal scaling
+
+- languages to add eventually (after the 3-4 in v2, each is mostly a config entry)
+	- c, ruby, scala, kotlin, r, c#, rust, go, php, assembly, swift, dart, elixir, erlang, racket, haskell, typescript
+
+## To Learn
+
+- Docker
+- Testing framework for spring boot
+- GitHub actions
 
 ## NOTE
 
