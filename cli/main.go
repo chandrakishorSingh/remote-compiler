@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -17,9 +18,10 @@ type executionRequest struct {
 }
 
 type executionResponse struct {
+	Status          string `json:"status"`
 	Stdout          string `json:"stdout"`
 	Stderr          string `json:"stderr"`
-	ExitCode        int    `json:"exitCode"`
+	ExitCode        *int   `json:"exitCode"`
 	ExecutionTimeMs int64  `json:"executionTimeMs"`
 	Truncated       bool   `json:"truncated"`
 }
@@ -109,10 +111,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "rcc: output truncated at 64KB")
 	}
 
-	if result.ExitCode < 0 {
-		fmt.Fprintln(os.Stderr, "rcc: program was killed by the server (timeout)")
-		os.Exit(124)
+	exit := "n/a"
+	if result.ExitCode != nil {
+		exit = strconv.Itoa(*result.ExitCode)
 	}
-	os.Exit(result.ExitCode)
+
+	fmt.Fprintf(os.Stderr, "rcc: status=%s exit=%s time=%dms\n", result.Status, exit, result.ExecutionTimeMs)
 
 }

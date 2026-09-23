@@ -1,3 +1,10 @@
 package com.chandrakishorsingh.remotecompiler.execution;
 
-public record ExecutionResponse(String stdout, String stderr, int exitCode, long executionTimeMs, boolean truncated) {}
+public record ExecutionResponse(
+    ExecutionStatus status,
+    String stdout,
+    String stderr,
+    Integer exitCode,
+    long executionTimeMs,
+    boolean truncated
+) {}

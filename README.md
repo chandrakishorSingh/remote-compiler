@@ -261,6 +261,10 @@
 	- prometheus + grafana
 	- nginx/traefik
 	- horizontal scaling
+	- `--json` output mode for the cli
+		* prints one json object on stdout (status, exit code, stdout, stderr, time, truncated) so scripts and other programs can consume the result
+		* in that mode the submitted program's own output is embedded in the json rather than written raw to stdout, and the human summary line is dropped
+		* rationale: stdout carries "the data the tool produces" — normally that is the program's output, but in json mode it is the structured result
 
 - languages to add eventually (after the 3-4 in v2, each is mostly a config entry)
 	- c, ruby, scala, kotlin, r, c#, rust, go, php, assembly, swift, dart, elixir, erlang, racket, haskell, typescript

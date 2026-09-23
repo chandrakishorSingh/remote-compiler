@@ -52,15 +52,17 @@ public class CodeExecutionService {
             if (!isFinished) {
                 process.destroyForcibly().waitFor();
                 return new ExecutionResponse(
+                    ExecutionStatus.TIMEOUT,
                     stdout.text(),
-                    stderr.text() + "\nexecution timed out after " + TIMEOUT_SECONDS + "s",
-                    -1,
+                    stderr.text() + "\nexecution timed out after " + TIMEOUT_SECONDS + "s\n",
+                    null,
                     timeTakenMs,
                     truncated
                 );
             }
 
             return new ExecutionResponse(
+                ExecutionStatus.COMPLETED,
                 stdout.text(),
                 stderr.text(),
                 process.exitValue(),
