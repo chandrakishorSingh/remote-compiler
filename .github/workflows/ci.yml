@@ -1,0 +1,29 @@
+name: CI
+on:
+    push:
+        branches: [main]
+    pull_request:
+jobs:
+    cli:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+              working-directory: cli
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-go@v7
+              with:
+                  go-version-file: cli/go.mod
+                  cache: false
+            - name: gofmt
+              run: |
+                    unformatted=$(gofmt -l .)
+                    if [ -n "$unformatted" ]; then
+                        echo "not gofmt-formatted:"; echo "$unformatted"; exit 1
+                    fi
+
+            - name: vet
+              run:  go vet ./...
+
+            - name: build
+              run: go build ./...
