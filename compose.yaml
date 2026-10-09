@@ -1,0 +1,14 @@
+services:
+    postgres:
+        image: postgres:18
+        environment:
+            POSTGRES_DB: remote_compiler
+            POSTGRES_USER: rc
+            POSTGRES_PASSWORD: rc
+        ports:
+            - "5432:5432"
+        volumes:
+            - pgdata:/var/lib/postgresql
+
+volumes:
+    pgdata:
