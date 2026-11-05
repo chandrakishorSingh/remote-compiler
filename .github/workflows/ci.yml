@@ -29,6 +29,20 @@ jobs:
               run: go build ./...
     server:
         runs-on: ubuntu-latest
+        services:
+          postgres:
+              image: postgres:18
+              env:
+                  POSTGRES_DB: remote_compiler
+                  POSTGRES_USER: rc
+                  POSTGRES_PASSWORD: rc
+              ports:
+                  - 5432:5432
+              options: >-
+                  --health-cmd "pg_isready -U rc -d remote_compiler"
+                  --health-interval 5s
+                  --health-timeout 5s
+                  --health-retries 10
         defaults:
           run:
               working-directory: server
